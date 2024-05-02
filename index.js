@@ -1,4 +1,5 @@
 // 필요한 모듈들을 불러옵니다.
+const cookieParser = require('cookie-parser')
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -8,12 +9,34 @@ const app = express();
 
 // 사용자 인증 라우트
 const secretText = 'superSecret';
-app.use(express.json())
+const refreshSecretText = 'refreshSecret';
+
+let refreshTokens = []
+
+app.use(express.json());
+app.use(cookieParser());
+
 app.post('/login', (req,res) => {
     const username = req.body.username;
     const user = { name : username };
 
-    const accessToken = jwt.sign(user, secretText);
+    // jwt를 이용해서 accessToken 생성
+    const accessToken = jwt.sign(user,
+        secretText, 
+        {expiresIn : '30s'});
+
+    // jwt를 이용해서 refreshToken 생성
+    const refreshToken = jwt.sign(user,
+        refreshSecretText,
+        {expiresIn : '1d' });
+    
+    refreshTokens.push(refreshToken);
+
+    // refreshToken을 cookie에 넣어주기
+    res.cookie('jwt', refreshToken,{
+        httpOnly : true,
+        maxAge : 24 * 60 * 60 * 1000 // 하루
+    })
 
     res.json({accessToken : accessToken})
 })
@@ -44,7 +67,29 @@ function authMiddleware(req, res, next){
 }
 
 
+app.get('/refresh', (req, res) => {
+    const cookies = req.cookies;
+    // 쿠키가 있는지 확인하고 없으면 상태코드 403 응답
+    if(!cookies?.jwt) return res.sendStatus(403);
 
+    const refreshToken = cookies.jwt;
+    // refreshTokens에 refreshToken이 포함되어있는지 확인 후 없으면 상태코드 403 응답
+    if(!refreshTokens?.includes(refreshToken)){
+        return res.sendStatus(403);
+    }
+
+    jwt.verify(refreshToken, refreshSecretText, (err, user) => {
+        if(err) return res.sendStatus(403);
+        
+        // refreshToken(payload)과 refreshSecretText가 유효하면 accessToken 재발급 
+        const accessToken = jwt.sign({name : user.name},
+            secretText,
+            {expiresIn: '30s' }
+        )
+        res.json({ accessToken })
+            
+    })
+})
 
 // 서버가 4000번 포트에서 듣기를 시작합니다. 서버가 시작되면 콘솔에 메시지를 출력합니다.
 // 포트 4040으로 바꿧어요
